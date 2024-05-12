@@ -8,5 +8,5 @@ class Transactions(models.Model):
     email = models.EmailField(max_length=50)
     wilaya = models.IntegerField()
     payment_code = models.CharField(max_length=10)
-    payment_date = models.DateField(auto_now_add=True)
+    payment_date = models.DateTimeField(auto_now_add=True)
     file = models.FileField(upload_to='transactions/')

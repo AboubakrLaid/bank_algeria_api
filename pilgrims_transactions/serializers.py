@@ -6,12 +6,14 @@ from django.db import transaction
 
 from fpdf import FPDF
 
-from django.core.mail import EmailMessage
 from api import settings
+from datetime import  timezone , timedelta
+from django.core.mail import EmailMessage
 
 
 
 def generate_pdf(instance):
+    print("generatting pdf")
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
@@ -23,13 +25,18 @@ def generate_pdf(instance):
     
     pdf.cell(200, 10, txt="Transaction Receipt", ln=True, align='C')
     # Add transaction details
-    pdf.cell(200, 10, txt=f"NIN: {instance.nin}", ln=True)
-    pdf.cell(200, 10, txt=f"Name: {instance.first_name} {instance.last_name}", ln=True)
-    pdf.cell(200, 10, txt=f"Email: {instance.email}", ln=True)
-    pdf.cell(200, 10, txt=f"Municipal: {instance.municipal}", ln=True)
-    pdf.cell(200, 10, txt=f"Wilaya: {instance.wilaya}", ln=True)
-    pdf.cell(200, 10, txt=f"Payment Code: {instance.payment_code}", ln=True)
-    pdf.cell(200, 10, txt=f"Payment Date: {instance.payment_date.strftime('%Y-%m-%d')}", ln=True)
+    #! the point after each string is used to facilitate the extracting of the text from the pdf
+    pdf.cell(200, 10, txt=f"NIN: {instance.nin}.", ln=True)
+    pdf.cell(200, 10, txt=f"First Name: {instance.first_name}.", ln=True)
+    pdf.cell(200, 10, txt=f"Last Name: {instance.last_name}.", ln=True)
+    pdf.cell(200, 10, txt=f"Email: {instance.email}.", ln=True)
+    pdf.cell(200, 10, txt=f"Wilaya: {instance.wilaya}.", ln=True)
+    pdf.cell(200, 10, txt=f"Payment Code: {instance.payment_code}.", ln=True)
+    algeria_offset = timedelta(hours=1)
+
+    # Convert instance.date_created to a timezone-aware datetime object
+    adjusted_time = instance.payment_date.astimezone(timezone(algeria_offset))
+    pdf.cell(200, 10, txt=f"Payment Date: {adjusted_time.strftime("%Y-%m-%d %H:%M:%S")}", ln=True)
 
     # Save to a variable
     # pdf_output = pdf.output(dest='S').encode('latin1')
@@ -37,6 +44,7 @@ def generate_pdf(instance):
     file_path = f"transactions/{instance.payment_code}.pdf"
     pdf.output(file_path, 'F')
     binary_pdf = open(file_path, 'rb').read()
+    print("pdf generated")
     return binary_pdf
     
 
@@ -64,17 +72,19 @@ class TransactionsSerializer(serializers.ModelSerializer):
         model = Transactions
         fields = '__all__'
         extra_kwargs = {
-            "file" : {"required": False}
+            "file" : {"required": False},
+            "payment_code": {"read_only": True},
         }
+      
         
         
     def create(self, validated_data):
         with transaction.atomic():
-            transa = Transactions.objects.create(**validated_data)
             
-            transa.save()
             
             try:
+                transa = Transactions.objects.create(**validated_data)
+                
                 pdf_content = generate_pdf(transa)
                 pdf_filename = f"{transa.payment_code}.pdf"
                 pdf_mimetype = 'application/pdf'
@@ -86,16 +96,31 @@ class TransactionsSerializer(serializers.ModelSerializer):
                     recipient_list=[transa.email],
                     pdf_attachment=(pdf_filename, pdf_content, pdf_mimetype)
                 )
+                transa.file = pdf_filename
+                transa.save()
             except Exception as e:
-                
                 transa.delete()
-                raise serializers.ValidationError({"error": str(e)})
-            
-            
-            
-            
-            
+                raise serializers.ValidationError({"error": e})
             return transa
+        
+        
+class TransactionValidationSerializer(serializers.Serializer):
+    nin = serializers.CharField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    payment_code = serializers.CharField()
+    
+    def validate(self, data):
+        nin = data.get("nin")
+        first_name = data.get("first_name")
+        last_name = data.get("last_name")
+        payment_code = data.get("payment_code")
+        
+        try:
+            Transactions.objects.get(nin=nin, first_name=first_name, last_name=last_name, payment_code=payment_code)
+        except Transactions.DoesNotExist:
+            raise serializers.ValidationError({"error": "Transaction not found"})
+        return data
 
         
     
